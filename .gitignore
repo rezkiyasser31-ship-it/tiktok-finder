@@ -1,15 +1,21 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# dependencies
+# Dependencies
 node_modules/
 
-# Expo
+# Expo & Build outputs
 .expo/
 dist/
+build/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native folders & build outputs (excludes ~4GB android build artifacts)
+android/
+/android
+ios/
+/ios
+.gradle/
 .kotlin/
 *.orig.*
 *.jks
@@ -18,24 +24,37 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Compiled binaries and release builds (excludes ~118MB APK from docs)
+*.apk
+*.aab
+docs/*.apk
+
 # Metro
 .metro-health-check*
 
-# debug
+# Logs
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# System and Cache files
 .DS_Store
-*.pem
+Thumbs.db
+__pycache__/
+*.pyc
 
-# local env files
-.env*.local
+# Environment files
+.env
+.env.*
+!.env.example
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 
-# generated native folders
-/ios
-/android
+# Testing & Playwright artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+witcher_ui.xml

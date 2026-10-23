@@ -1,0 +1,215 @@
+diff --git a/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt b/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+index ff5b100..73f6eda 100644
+--- a/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
++++ b/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+@@ -66,44 +66,91 @@ class ExpoShareIntentModule : Module() {
+                     "filePath" to instance?.getAbsolutePath(uri),
+                 )
+             }
+-            val queryResult: Cursor = resolver.query(uri, null, null, null, null)!!
+-            queryResult.moveToFirst()
+-            val fileName = queryResult.getString(queryResult.getColumnIndex(OpenableColumns.DISPLAY_NAME))
+-            val fileSize = queryResult.getString(queryResult.getColumnIndex(OpenableColumns.SIZE))
+-            queryResult.close()
++            var fileName: String? = null
++            var fileSize: String? = null
++            try {
++                val queryResult: Cursor? = resolver.query(uri, null, null, null, null)
++                if (queryResult != null) {
++                    if (queryResult.moveToFirst()) {
++                        val nameIdx = queryResult.getColumnIndex(OpenableColumns.DISPLAY_NAME)
++                        if (nameIdx >= 0) fileName = queryResult.getString(nameIdx)
++                        val sizeIdx = queryResult.getColumnIndex(OpenableColumns.SIZE)
++                        if (sizeIdx >= 0) fileSize = queryResult.getString(sizeIdx)
++                    }
++                    queryResult.close()
++                }
++            } catch (e: Exception) {
++                Log.w("ExpoShareIntent", "Failed to query OpenableColumns: " + e.message)
++            }
+ 
+-            val mimeType = resolver.getType(uri)!!
++            val mimeType = try {
++                resolver.getType(uri) ?: "image/jpeg"
++            } catch (e: Exception) {
++                "image/jpeg"
++            }
+ 
+             var mediaWidth: String? = null;
+             var mediaHeight: String? = null;
+             var mediaDuration: String? = null;
+             if (mimeType.startsWith("image/")) {
+-                val options = BitmapFactory.Options().apply {
+-                    inJustDecodeBounds = true
++                try {
++                    val options = BitmapFactory.Options().apply {
++                        inJustDecodeBounds = true
++                    }
++                    resolver.openInputStream(uri)?.use { stream ->
++                        BitmapFactory.decodeStream(stream, null, options)
++                        mediaHeight = options.outHeight.toString()
++                        mediaWidth = options.outWidth.toString()
++                    }
++                } catch (e: Exception) {
++                    Log.w("ExpoShareIntent", "Failed to decode image dimensions: " + e.message)
+                 }
+-                BitmapFactory.decodeStream(resolver.openInputStream(uri), null, options)
+-                mediaHeight = options.outHeight.toString()
+-                mediaWidth = options.outWidth.toString()
+             }
+             if (mimeType.startsWith("video/")) {
+-                val retriever = MediaMetadataRetriever()
+-                retriever.setDataSource(instance?.getAbsolutePath(uri))
+-                mediaWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt().toString() ?: null
+-                mediaHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt().toString() ?: null
+-                // Check orientation and flip size if required
+-                val metaRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0;
+-                if (metaRotation == 90 || metaRotation == 270) {
+-                    mediaWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt().toString() ?: null
+-                    mediaHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt().toString() ?: null
++                try {
++                    val retriever = MediaMetadataRetriever()
++                    retriever.setDataSource(instance?.getAbsolutePath(uri))
++                    mediaWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt().toString() ?: null
++                    mediaHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt().toString() ?: null
++                    // Check orientation and flip size if required
++                    val metaRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0;
++                    if (metaRotation == 90 || metaRotation == 270) {
++                        mediaWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt().toString() ?: null
++                        mediaHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt().toString() ?: null
++                    }
++                    mediaDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt().toString() ?: null
++                } catch (e: Exception) {
++                    Log.w("ExpoShareIntent", "Failed to retrieve video metadata: " + e.message)
+                 }
+-                mediaDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt().toString() ?: null
+             }
+ 
++            var localFilePath: String? = null
++            try {
++                val cacheDir = instance?.context?.cacheDir
++                if (cacheDir != null) {
++                    val ext = if (mimeType.contains("png")) "png" else "jpg"
++                    val tempFile = File(cacheDir, "shared_intent_${System.currentTimeMillis()}.$ext")
++                    resolver.openInputStream(uri)?.use { input ->
++                        FileOutputStream(tempFile).use { output ->
++                            input.copyTo(output)
++                        }
++                    }
++                    if (tempFile.exists() && tempFile.length() > 0) {
++                        localFilePath = tempFile.absolutePath
++                    }
++                }
++            } catch (e: Exception) {
++                Log.w("ExpoShareIntent", "Failed to cache shared content stream: " + e.message)
++            }
++
++            val finalPath = localFilePath ?: instance?.getAbsolutePath(uri)
++
+             return mapOf(
+-                    "contentUri" to uri.toString(),
+-                    "filePath" to instance?.getAbsolutePath(uri),
+-                    "fileName" to fileName,
+-                    "fileSize" to fileSize,
++                    "contentUri" to (if (localFilePath != null) "file://$localFilePath" else uri.toString()),
++                    "filePath" to finalPath,
++                    "path" to (if (localFilePath != null) "file://$localFilePath" else finalPath),
++                    "fileName" to (fileName ?: (if (localFilePath != null) File(localFilePath).name else null)),
++                    "fileSize" to (fileSize ?: (if (localFilePath != null) File(localFilePath).length().toString() else null)),
+                     "mimeType" to mimeType,
+                     "width" to mediaWidth,
+                     "height" to mediaHeight,
+@@ -112,50 +159,55 @@ class ExpoShareIntentModule : Module() {
+         }
+ 
+         fun handleShareIntent(intent: Intent) {
+-            val activity = instance?.currentActivity
+-            if (activity != null && !activity.isTaskRoot) {
+-                val newIntent = Intent(intent).apply {
+-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+-                }
+-                activity.startActivity(newIntent)
+-                activity.finish()
+-                return
+-            }
+-            if (intent.type == null) return
+-            if (intent.type!!.startsWith("text/plain")) {
+-                // text / urls
+-                if (intent.action == Intent.ACTION_SEND) {
+-                    notifyShareIntent(mapOf(
+-                        "text" to intent.getStringExtra(Intent.EXTRA_TEXT),
+-                        "type" to "text",
+-                        "meta" to mapOf(
+-                            "title" to intent.getCharSequenceExtra(Intent.EXTRA_TITLE),
+-                        )
+-                    ))
+-                } else if (intent.action == Intent.ACTION_VIEW) {
+-                    notifyShareIntent(mapOf( "text" to intent.dataString, "type" to "text"))
+-                } else {
+-                    notifyError("Invalid action for text sharing: " + intent.action)
++            try {
++                val activity = instance?.currentActivity
++                if (activity != null && !activity.isTaskRoot) {
++                    val newIntent = Intent(intent).apply {
++                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++                    }
++                    activity.startActivity(newIntent)
++                    activity.finish()
++                    return
+                 }
+-            } else {
+-                // files / medias
+-                if (intent.action == Intent.ACTION_SEND) {
+-                    val uri = intent.parcelable<Uri>(Intent.EXTRA_STREAM);
+-                    if (uri != null) {
+-                        notifyShareIntent(mapOf( "files" to arrayOf(getFileInfo(uri), "type" to "file")))
++                if (intent.type == null) return
++                if (intent.type!!.startsWith("text/plain")) {
++                    // text / urls
++                    if (intent.action == Intent.ACTION_SEND) {
++                        notifyShareIntent(mapOf(
++                            "text" to intent.getStringExtra(Intent.EXTRA_TEXT),
++                            "type" to "text",
++                            "meta" to mapOf(
++                                "title" to intent.getCharSequenceExtra(Intent.EXTRA_TITLE),
++                            )
++                        ))
++                    } else if (intent.action == Intent.ACTION_VIEW) {
++                        notifyShareIntent(mapOf( "text" to intent.dataString, "type" to "text"))
+                     } else {
+-                        notifyError("empty uri for file sharing: " + intent.action)
++                        notifyError("Invalid action for text sharing: " + intent.action)
+                     }
+-                } else if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+-                    val uris = intent.parcelableArrayList<Uri>(Intent.EXTRA_STREAM)
+-                    if (uris != null) {
+-                        notifyShareIntent(mapOf( "files" to uris.map { getFileInfo(it) }, "type" to "file"))
++                } else {
++                    // files / medias
++                    if (intent.action == Intent.ACTION_SEND) {
++                        val uri = intent.parcelable<Uri>(Intent.EXTRA_STREAM);
++                        if (uri != null) {
++                            notifyShareIntent(mapOf( "files" to arrayOf(getFileInfo(uri)), "type" to "file"))
++                        } else {
++                            notifyError("empty uri for file sharing: " + intent.action)
++                        }
++                    } else if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
++                        val uris = intent.parcelableArrayList<Uri>(Intent.EXTRA_STREAM)
++                        if (uris != null) {
++                            notifyShareIntent(mapOf( "files" to uris.map { getFileInfo(it) }, "type" to "file"))
++                        } else {
++                            notifyError("empty uris array for file sharing: " + intent.action)
++                        }
+                     } else {
+-                        notifyError("empty uris array for file sharing: " + intent.action)
++                        notifyError("Invalid action for file sharing: " + intent.action)
+                     }
+-                } else {
+-                    notifyError("Invalid action for file sharing: " + intent.action)
+                 }
++            } catch (e: Exception) {
++                Log.e("ExpoShareIntent", "Error handling share intent", e)
++                notifyError("Error handling share intent: " + e.message)
+             }
+         }
+ 
